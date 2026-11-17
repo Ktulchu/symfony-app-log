@@ -26,11 +26,13 @@ jobs:
           docker load -i /tmp/mysql5713.tar
           docker run -d --name mysql5713 -p 127.0.0.1:3306:3306 -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=audit -e MYSQL_USER=audit -e MYSQL_PASSWORD=audit mysql5713-ci --log-bin-trust-function-creators=1
           for attempt in $(seq 1 60); do
-            if docker exec mysql5713 mysqladmin ping -uroot -proot --silent; then break; fi
+            # The entrypoint uses a temporary socket-only server during init.
+            # Require TCP and authentication to avoid its false readiness signal.
+            if docker exec mysql5713 mysql -h127.0.0.1 -uroot -proot -Nse 'SELECT VERSION()'; then break; fi
             sleep 2
           done
-          test "$(docker exec mysql5713 mysql -uroot -proot -Nse 'SELECT VERSION()')" = '5.7.13'
-          docker exec mysql5713 mysql -uroot -proot -e "CREATE DATABASE fixture; GRANT ALL ON fixture.* TO 'audit'@'%';"
+          test "$(docker exec mysql5713 mysql -h127.0.0.1 -uroot -proot -Nse 'SELECT VERSION()')" = '5.7.13'
+          docker exec mysql5713 mysql -h127.0.0.1 -uroot -proot -e "CREATE DATABASE fixture; GRANT ALL ON fixture.* TO 'audit'@'%';"
       - run: composer validate --strict
       - run: composer install --no-interaction --prefer-dist
       - run: composer audit

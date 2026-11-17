@@ -5,6 +5,8 @@ namespace Ktulchu\AppLog;
 
 use Doctrine\Common\EventSubscriber;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Platforms\MySQLPlatform;
+use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Event\OnFlushEventArgs;
 use Doctrine\ORM\Event\PostFlushEventArgs;
@@ -16,6 +18,9 @@ final class AuditSubscriber implements EventSubscriber
 {
     /** @var list<array{entity: object, meta: ClassMetadata<object>, fields: list<string>, id: array<string, mixed>, old: array<string, array{type: string, raw: ?string, json: string}>, operation: string}> */
     private array $pending = [];
+
+    /** @var array<string, array<string, string>> */
+    private array $mysqlColumnTypes = [];
 
     public function getSubscribedEvents(): array
     {
@@ -35,8 +40,8 @@ final class AuditSubscriber implements EventSubscriber
                 $attributes = $meta->getReflectionClass()->getAttributes(Audited::class);
                 if ($attributes === []) { continue; }
                 $db = $em->getConnection();
-                if (!$db->getDatabasePlatform() instanceof \Doctrine\DBAL\Platforms\PostgreSQLPlatform) {
-                    throw new \LogicException('AppLog requires PostgreSQL.');
+                if (!$db->getDatabasePlatform() instanceof PostgreSQLPlatform && !$db->getDatabasePlatform() instanceof MySQLPlatform) {
+                    throw new \LogicException('AppLog requires PostgreSQL or MySQL 8.0.');
                 }
                 if (!$db->isTransactionActive()) {
                     throw new \LogicException('Audited flush requires an outer transaction; use EntityManager::wrapInTransaction().');
@@ -77,10 +82,18 @@ final class AuditSubscriber implements EventSubscriber
                 }
                 if ($old === []) { continue; }
             }
-            $db->executeStatement(
-                'INSERT INTO app_log (entity_type, entity_id, operation, old_values, new_values) VALUES (?, CAST(? AS jsonb), ?, CAST(? AS json), CAST(? AS json))',
-                [$meta->name, json_encode($id, JSON_THROW_ON_ERROR), $operation, $this->document($old), $this->document($new)]
-            );
+            $idJson = json_encode($id, JSON_THROW_ON_ERROR);
+            if ($db->getDatabasePlatform() instanceof MySQLPlatform) {
+                $db->executeStatement(
+                    'INSERT INTO app_log (entity_type, entity_id, entity_key, operation, old_values, new_values) VALUES (?, ?, ?, ?, ?, ?)',
+                    [$meta->name, $idJson, hash('sha256', $idJson), $operation, $this->document($old), $this->document($new)]
+                );
+            } else {
+                $db->executeStatement(
+                    'INSERT INTO app_log (entity_type, entity_id, operation, old_values, new_values) VALUES (?, CAST(? AS jsonb), ?, CAST(? AS json), CAST(? AS json))',
+                    [$meta->name, $idJson, $operation, $this->document($old), $this->document($new)]
+                );
+            }
         }
     }
 
@@ -88,6 +101,10 @@ final class AuditSubscriber implements EventSubscriber
      *  @param array{type: string, raw: ?string, json: string} $new */
     private function different(Connection $db, array $old, array $new): bool
     {
+        if ($db->getDatabasePlatform() instanceof MySQLPlatform && $old['type'] === 'json') {
+            // MySQL JSON values are normalized; compare them as JSON, not serialized text.
+            return !(bool) $db->fetchOne('SELECT CAST(? AS JSON) <=> CAST(? AS JSON)', [$old['raw'], $new['raw']]);
+        }
         if ($old['type'] === 'jsonb') {
             return (bool) $db->fetchOne('SELECT CAST(? AS jsonb) IS DISTINCT FROM CAST(? AS jsonb)', [$old['raw'], $new['raw']]);
         }
@@ -102,6 +119,9 @@ final class AuditSubscriber implements EventSubscriber
     private function snapshot(EntityManagerInterface $em, ClassMetadata $meta, array $fields, array $id, bool $lock): array
     {
         $db = $em->getConnection();
+        if ($db->getDatabasePlatform() instanceof MySQLPlatform) {
+            return $this->mysqlSnapshot($em, $meta, $fields, $id, $lock);
+        }
         $quote = $db->getDatabasePlatform()->quoteSingleIdentifier(...);
         $select = [];
         foreach ($fields as $i => $field) {
@@ -118,6 +138,62 @@ final class AuditSubscriber implements EventSubscriber
         $result = [];
         foreach ($fields as $i => $field) {
             $result[$field] = ['type' => (string) $row['t' . $i], 'raw' => $row['r' . $i] === null ? null : (string) $row['r' . $i], 'json' => (string) $row['j' . $i]];
+        }
+        return $result;
+    }
+
+    /**
+     * MySQL JSON columns return normalized documents. JSON_OBJECT keeps typed JSON values
+     * and numeric precision on the server rather than decoding them in PHP.
+     *
+     * @param ClassMetadata<object> $meta
+     * @param list<string> $fields
+     * @param array<string, mixed> $id
+     * @return array<string, array{type: string, raw: ?string, json: string}>
+     */
+    private function mysqlSnapshot(EntityManagerInterface $em, ClassMetadata $meta, array $fields, array $id, bool $lock): array
+    {
+        $db = $em->getConnection();
+        $quote = $db->getDatabasePlatform()->quoteSingleIdentifier(...);
+        $tableName = $meta->getTableName();
+        $schemaName = $meta->getSchemaName();
+        $key = ($schemaName ?? '') . '.' . $tableName;
+        if (!isset($this->mysqlColumnTypes[$key])) {
+            // Read the real SQL types: a VARCHAR containing JSON is not a JSON column.
+            $this->mysqlColumnTypes[$key] = $db->fetchAllKeyValue(
+                'SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ?',
+                [$schemaName, $tableName]
+            );
+        }
+        $types = $this->mysqlColumnTypes[$key];
+        $select = [];
+        foreach ($fields as $i => $field) {
+            $columnName = $meta->getColumnName($field);
+            if (!isset($types[$columnName])) {
+                throw new \LogicException('Cannot resolve MySQL type for column: ' . $columnName);
+            }
+            $column = $quote($columnName);
+            $raw = "CAST($column AS CHAR CHARACTER SET utf8mb4)";
+            $select[] = "$raw AS r$i";
+            $select[] = "CAST(JSON_OBJECT('sql_null', $column IS NULL, 'value', $column, 'raw', $raw) AS CHAR CHARACTER SET utf8mb4) AS j$i";
+        }
+        $identifier = $meta->getSingleIdentifierFieldName();
+        if (!array_key_exists($identifier, $id)) { throw new \LogicException('Missing entity identifier.'); }
+        $table = $schemaName === null ? $quote($tableName) : $quote($schemaName) . '.' . $quote($tableName);
+        $row = $db->fetchAssociative(
+            'SELECT ' . implode(', ', $select) . ' FROM ' . $table
+            . ' WHERE ' . $quote($meta->getColumnName($identifier)) . ' = ?' . ($lock ? ' FOR UPDATE' : ''),
+            [$id[$identifier]],
+            [$meta->getTypeOfField($identifier) ?? 'string']
+        );
+        if ($row === false) { throw new \RuntimeException('Audited row disappeared; flush aborted.'); }
+        $result = [];
+        foreach ($fields as $i => $field) {
+            $result[$field] = [
+                'type' => $types[$meta->getColumnName($field)],
+                'raw' => $row['r' . $i] === null ? null : (string) $row['r' . $i],
+                'json' => (string) $row['j' . $i],
+            ];
         }
         return $result;
     }

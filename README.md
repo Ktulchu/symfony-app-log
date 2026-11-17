@@ -31,6 +31,8 @@ services:
 
 Register once for the intended entity manager/connection. Do not also register it as a subscriber. The listener takes its DBAL connection from that entity manager.
 
+For PHP 8.4+ with Symfony 8, enable `doctrine.orm.enable_native_lazy_objects: true` (Symfony 8 no longer provides the older lazy ghost implementation). The integration fixture selects this automatically by PHP version.
+
 ## Migrate
 
 ```yaml

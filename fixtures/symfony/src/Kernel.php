@@ -23,7 +23,7 @@ final class Kernel extends BaseKernel
             $container->loadFromExtension('framework', ['secret' => 'disposable-test-fixture', 'test' => true]);
             $container->loadFromExtension('doctrine', [
                 'dbal' => ['url' => '%env(DATABASE_URL)%', 'types' => ['app_log_json' => RawJsonType::class, 'app_log_jsonb' => RawJsonbType::class]],
-                'orm' => ['auto_generate_proxy_classes' => true, 'mappings' => ['Fixture' => ['type' => 'attribute', 'dir' => __DIR__ . '/Entity', 'prefix' => 'Fixture\\Entity']]],
+                'orm' => ['auto_generate_proxy_classes' => true, 'enable_native_lazy_objects' => PHP_VERSION_ID >= 80400, 'mappings' => ['Fixture' => ['type' => 'attribute', 'dir' => __DIR__ . '/Entity', 'prefix' => 'Fixture\\Entity']]],
             ]);
             $container->loadFromExtension('doctrine_migrations', [
                 'migrations_paths' => ['Ktulchu\\AppLog\\Migrations' => dirname(__DIR__) . '/vendor/ktulchu/symfony-app-log/migrations'],

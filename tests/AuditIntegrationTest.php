@@ -29,7 +29,9 @@ final class AuditIntegrationTest extends TestCase
         }
         $db = DriverManager::getConnection(['driver' => 'pdo_pgsql', 'host' => getenv('PGHOST') ?: '127.0.0.1', 'user' => 'audit', 'password' => 'audit', 'dbname' => 'audit']);
         $db->executeStatement('DROP TABLE IF EXISTS app_log, audit_fixture, doctrine_migration_versions CASCADE');
-        $this->em = new EntityManager($db, ORMSetup::createAttributeMetadataConfiguration([__DIR__], true));
+        $config = ORMSetup::createAttributeMetadataConfiguration([__DIR__], true);
+        if (PHP_VERSION_ID >= 80400) { $config->enableNativeLazyObjects(true); }
+        $this->em = new EntityManager($db, $config);
         $this->em->getEventManager()->addEventSubscriber(new AuditSubscriber());
         (new SchemaTool($this->em))->createSchema([$this->em->getClassMetadata(Record::class)]);
         $factory = DependencyFactory::fromConnection(new ConfigurationArray(['migrations_paths' => ['Ktulchu\\AppLog\\Migrations' => dirname(__DIR__) . '/migrations']]), new ExistingConnection($db));

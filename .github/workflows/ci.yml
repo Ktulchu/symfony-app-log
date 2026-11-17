@@ -41,7 +41,7 @@ jobs:
       - run: composer validate --strict
       - run: composer update --no-interaction --prefer-dist --with 'symfony/framework-bundle:${{ matrix.symfony }}'
       - run: composer audit
-      - run: composer test
+      - run: composer test -- --testsuite PostgreSQL
       - run: composer analyse
       - run: psql -h 127.0.0.1 -U audit -d audit -c 'CREATE DATABASE fixture'
       - run: composer install --no-interaction --prefer-dist
@@ -50,3 +50,33 @@ jobs:
         working-directory: fixtures/symfony
       - run: php smoke.php
         working-directory: fixtures/symfony
+  mysql:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: audit
+          MYSQL_USER: audit
+          MYSQL_PASSWORD: audit
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uaudit -paudit"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PASSWORD: audit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, mbstring, dom
+          coverage: none
+          tools: composer:v2
+      - run: composer validate --strict
+      - run: composer update --no-interaction --prefer-dist
+      - run: composer audit
+      - run: composer test -- --testsuite MySQL
+      - run: composer analyse

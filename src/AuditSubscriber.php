@@ -5,6 +5,8 @@ namespace Ktulchu\AppLog;
 
 use Doctrine\Common\EventSubscriber;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Platforms\MySQLPlatform;
+use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Event\OnFlushEventArgs;
 use Doctrine\ORM\Event\PostFlushEventArgs;
@@ -16,6 +18,9 @@ final class AuditSubscriber implements EventSubscriber
 {
     /** @var list<array{entity: object, meta: ClassMetadata<object>, fields: list<string>, id: array<string, mixed>, old: array<string, array{type: string, raw: ?string, json: string}>, operation: string}> */
     private array $pending = [];
+
+    /** @var array<string, array<string, string>> */
+    private array $mysqlColumnTypes = [];
 
     public function getSubscribedEvents(): array
     {
@@ -35,8 +40,8 @@ final class AuditSubscriber implements EventSubscriber
                 $attributes = $meta->getReflectionClass()->getAttributes(Audited::class);
                 if ($attributes === []) { continue; }
                 $db = $em->getConnection();
-                if (!$db->getDatabasePlatform() instanceof \Doctrine\DBAL\Platforms\PostgreSQLPlatform) {
-                    throw new \LogicException('AppLog requires PostgreSQL.');
+                if (!$db->getDatabasePlatform() instanceof PostgreSQLPlatform && !$db->getDatabasePlatform() instanceof MySQLPlatform) {
+                    throw new \LogicException('AppLog requires PostgreSQL or MySQL 8.0+.');
                 }
                 if (!$db->isTransactionActive()) {
                     throw new \LogicException('Audited flush requires an outer transaction; use EntityManager::wrapInTransaction().');
@@ -77,10 +82,19 @@ final class AuditSubscriber implements EventSubscriber
                 }
                 if ($old === []) { continue; }
             }
-            $db->executeStatement(
-                'INSERT INTO app_log (entity_type, entity_id, operation, old_values, new_values) VALUES (?, CAST(? AS jsonb), ?, CAST(? AS json), CAST(? AS json))',
-                [$meta->name, json_encode($id, JSON_THROW_ON_ERROR), $operation, $this->document($old), $this->document($new)]
-            );
+            $idJson = json_encode($id, JSON_THROW_ON_ERROR);
+            if ($db->getDatabasePlatform() instanceof PostgreSQLPlatform) {
+                $db->executeStatement(
+                    'INSERT INTO app_log (entity_type, entity_id, operation, old_values, new_values) VALUES (?, CAST(? AS jsonb), ?, CAST(? AS json), CAST(? AS json))',
+                    [$meta->name, $idJson, $operation, $this->document($old), $this->document($new)]
+                );
+            } else {
+                // Hash the same encoded ID as the reader. Never index a JSON column.
+                $db->executeStatement(
+                    'INSERT INTO app_log (entity_type, entity_id, entity_id_hash, operation, old_values, new_values) VALUES (?, CAST(? AS JSON), UNHEX(SHA2(?, 256)), ?, CAST(? AS JSON), CAST(? AS JSON))',
+                    [$meta->name, $idJson, $idJson, $operation, $this->document($old), $this->document($new)]
+                );
+            }
         }
     }
 
@@ -91,7 +105,11 @@ final class AuditSubscriber implements EventSubscriber
         if ($old['type'] === 'jsonb') {
             return (bool) $db->fetchOne('SELECT CAST(? AS jsonb) IS DISTINCT FROM CAST(? AS jsonb)', [$old['raw'], $new['raw']]);
         }
-        // JSON deliberately tracks source representation. Other columns use their DB text representation.
+        if ($old['type'] === 'json' && $db->getDatabasePlatform() instanceof MySQLPlatform) {
+            // MySQL normalizes JSON documents; SQL null-safe comparison distinguishes SQL NULL from JSON null.
+            return !(bool) $db->fetchOne('SELECT CAST(? AS JSON) <=> CAST(? AS JSON)', [$old['raw'], $new['raw']]);
+        }
+        // PostgreSQL JSON tracks source representation. Other columns use their DB text representation.
         return $old['raw'] !== $new['raw'];
     }
 
@@ -102,13 +120,69 @@ final class AuditSubscriber implements EventSubscriber
     private function snapshot(EntityManagerInterface $em, ClassMetadata $meta, array $fields, array $id, bool $lock): array
     {
         $db = $em->getConnection();
-        $quote = $db->getDatabasePlatform()->quoteSingleIdentifier(...);
+        $platform = $db->getDatabasePlatform();
+        $quote = $platform->quoteSingleIdentifier(...);
+        $postgres = $platform instanceof PostgreSQLPlatform;
+        $mysqlTypes = $postgres ? [] : $this->getMysqlColumnTypes($db, $meta);
         $select = [];
         foreach ($fields as $i => $field) {
-            $column = $quote($meta->getColumnName($field));
-            $select[] = "pg_typeof($column)::text AS t$i";
-            $select[] = "$column::text AS r$i";
-            $select[] = "json_build_object('sql_null', $column IS NULL, 'value', $column, 'raw', $column::text)::text AS j$i";
+            $columnName = $meta->getColumnName($field);
+            $column = $quote($columnName);
+            if ($postgres) {
+                $select[] = "pg_typeof($column)::text AS t$i";
+                $select[] = "$column::text AS r$i";
+                $select[] = "json_build_object('sql_null', $column IS NULL, 'value', $column, 'raw', $column::text)::text AS j$i";
+            } else {
+                if (!isset($mysqlTypes[$columnName])) {
+                    throw new \LogicException('MySQL audit column not found: ' . $columnName);
+                }
+                $raw = "CAST($column AS CHAR CHARACTER SET utf8mb4)";
+                $select[] = "$raw AS r$i";
+                $select[] = "JSON_OBJECT('sql_null', JSON_EXTRACT(IF($column IS NULL, 'true', 'false'), '
+        $identifier = $meta->getSingleIdentifierFieldName();
+        if (!array_key_exists($identifier, $id)) { throw new \LogicException('Missing entity identifier.'); }
+        $table = $meta->getSchemaName() === null ? $quote($meta->getTableName()) : $quote($meta->getSchemaName()) . '.' . $quote($meta->getTableName());
+        $row = $db->fetchAssociative('SELECT ' . implode(', ', $select) . ' FROM ' . $table . ' WHERE ' . $quote($meta->getColumnName($identifier)) . ' = ?' . ($lock ? ' FOR UPDATE' : ''), [$id[$identifier]], [$meta->getTypeOfField($identifier) ?? 'string']);
+        if ($row === false) { throw new \RuntimeException('Audited row disappeared; flush aborted.'); }
+        $result = [];
+        foreach ($fields as $i => $field) {
+            $result[$field] = ['type' => $postgres ? (string) $row['t' . $i] : $mysqlTypes[$meta->getColumnName($field)], 'raw' => $row['r' . $i] === null ? null : (string) $row['r' . $i], 'json' => (string) $row['j' . $i]];
+        }
+        return $result;
+    }
+
+    /** @param ClassMetadata<object> $meta
+     *  @return array<string, string> */
+    private function getMysqlColumnTypes(Connection $db, ClassMetadata $meta): array
+    {
+        $schema = $meta->getSchemaName() ?? (string) $db->fetchOne('SELECT DATABASE()');
+        $key = $schema . '.' . $meta->getTableName();
+        if (!isset($this->mysqlColumnTypes[$key])) {
+            $columns = $db->fetchAllAssociative(
+                'SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',
+                [$schema, $meta->getTableName()]
+            );
+            $types = [];
+            foreach ($columns as $column) {
+                $types[(string) $column['column_name']] = (string) $column['data_type'];
+            }
+            $this->mysqlColumnTypes[$key] = $types;
+        }
+        return $this->mysqlColumnTypes[$key];
+    }
+
+    /** @param array<string, array{type: string, raw: ?string, json: string}> $snapshot */
+    private function document(array $snapshot): string
+    {
+        $fields = [];
+        foreach ($snapshot as $field => $value) {
+            $fields[] = json_encode($field, JSON_THROW_ON_ERROR) . ':{"db_type":' . json_encode($value['type'], JSON_THROW_ON_ERROR) . ',"data":' . $value['json'] . '}';
+        }
+        return '{' . implode(',', $fields) . '}';
+    }
+}
+), 'value', $column, 'raw', $raw) AS j$i";
+            }
         }
         $identifier = $meta->getSingleIdentifierFieldName();
         if (!array_key_exists($identifier, $id)) { throw new \LogicException('Missing entity identifier.'); }

@@ -13,10 +13,37 @@
     "symfony/framework-bundle": "^7.4 || ^8.0",
     "doctrine/doctrine-bundle": "^2.18 || ^3.0"
   },
-  "require-dev": {"phpunit/phpunit": "^11.5", "phpstan/phpstan": "^2.1", "symfony/cache": "^7.4 || ^8.0"},
-  "autoload": {"psr-4": {"Ktulchu\\AppLog\\": "src/", "Ktulchu\\AppLog\\Migrations\\": "migrations/"}},
-  "autoload-dev": {"psr-4": {"Ktulchu\\AppLog\\Tests\\": "tests/"}},
-  "scripts": {"test": "phpunit", "analyse": "phpstan analyse --memory-limit=512M"},
-  "config": {"sort-packages": true},
-  "archive": {"exclude": ["/vendor", "/.phpunit.cache", "/fixtures/symfony/vendor", "/fixtures/symfony/var", "/fixtures/symfony/composer.lock"]}
+  "require-dev": {
+    "phpunit/phpunit": "^11.5",
+    "phpstan/phpstan": "^2.1",
+    "symfony/cache": "^7.4 || ^8.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "Ktulchu\\AppLog\\": "src/",
+      "Ktulchu\\AppLog\\Migrations\\": "migrations/",
+      "Ktulchu\\AppLog\\MySqlMigrations\\": "mysql_migrations/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Ktulchu\\AppLog\\Tests\\": "tests/"
+    }
+  },
+  "scripts": {
+    "test": "phpunit",
+    "analyse": "phpstan analyse --memory-limit=512M"
+  },
+  "config": {
+    "sort-packages": true
+  },
+  "archive": {
+    "exclude": [
+      "/vendor",
+      "/.phpunit.cache",
+      "/fixtures/symfony/vendor",
+      "/fixtures/symfony/var",
+      "/fixtures/symfony/composer.lock"
+    ]
+  }
 }

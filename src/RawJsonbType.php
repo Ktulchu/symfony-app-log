@@ -3,8 +3,15 @@ declare(strict_types=1);
 namespace Ktulchu\AppLog;
 
 use Doctrine\DBAL\Platforms\AbstractPlatform;
+use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 
 final class RawJsonbType extends RawJsonType
 {
-    public function getSQLDeclaration(array $column, AbstractPlatform $platform): string { return 'JSONB'; }
+    public function getSQLDeclaration(array $column, AbstractPlatform $platform): string
+    {
+        if (!$platform instanceof PostgreSQLPlatform) {
+            throw new \LogicException('app_log_jsonb is only supported on PostgreSQL; use app_log_json on MySQL.');
+        }
+        return 'JSONB';
+    }
 }

@@ -41,7 +41,7 @@ final class AuditIntegrationTest extends TestCase
         $factory->getMigrator()->migrate($plan, new MigratorConfiguration());
     }
 
-    protected function tearDown(): void { $this->em->getConnection()->close(); }
+    protected function tearDown(): void { if (isset($this->em)) { $this->em->getConnection()->close(); } }
 
     private function create(): Record
     {

@@ -1,6 +1,6 @@
 {
   "name": "ktulchu/symfony-app-log",
-  "description": "Transactional PostgreSQL audit snapshots for selected Doctrine entities in Symfony",
+  "description": "Transactional PostgreSQL and MySQL audit snapshots for selected Doctrine entities in Symfony",
   "type": "library",
   "license": "MIT",
   "require": {

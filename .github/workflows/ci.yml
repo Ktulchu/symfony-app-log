@@ -86,6 +86,8 @@ jobs:
       - run: composer validate --strict
       - run: composer update --no-interaction --prefer-dist --with 'symfony/framework-bundle:${{ matrix.symfony }}'
       - run: composer audit
+      - name: Allow triggers in disposable MySQL CI service
+        run: docker exec "${{ job.services.mysql.id }}" mysql -uroot -proot -e "SET GLOBAL log_bin_trust_function_creators = 1"
       - run: composer test
       - run: composer analyse
       - name: Clear disposable tables for Symfony consumer smoke test

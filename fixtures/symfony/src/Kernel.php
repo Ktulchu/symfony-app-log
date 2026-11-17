@@ -21,9 +21,15 @@ final class Kernel extends BaseKernel
     {
         $loader->load(function (ContainerBuilder $container): void {
             $container->loadFromExtension('framework', ['secret' => 'disposable-test-fixture', 'test' => true]);
+            $orm = ['mappings' => ['Fixture' => ['type' => 'attribute', 'dir' => __DIR__ . '/Entity', 'prefix' => 'Fixture\\Entity']]];
+            // DoctrineBundle 3 requires native lazy objects and removed the proxy configuration.
+            if (version_compare(\Composer\InstalledVersions::getVersion('doctrine/doctrine-bundle'), '3.0.0', '<')) {
+                $orm['auto_generate_proxy_classes'] = true;
+                $orm['enable_native_lazy_objects'] = PHP_VERSION_ID >= 80400;
+            }
             $container->loadFromExtension('doctrine', [
                 'dbal' => ['url' => '%env(DATABASE_URL)%', 'types' => ['app_log_json' => RawJsonType::class, 'app_log_jsonb' => RawJsonbType::class]],
-                'orm' => ['auto_generate_proxy_classes' => true, 'enable_native_lazy_objects' => PHP_VERSION_ID >= 80400, 'mappings' => ['Fixture' => ['type' => 'attribute', 'dir' => __DIR__ . '/Entity', 'prefix' => 'Fixture\\Entity']]],
+                'orm' => $orm,
             ]);
             $container->loadFromExtension('doctrine_migrations', [
                 'migrations_paths' => ['Ktulchu\\AppLog\\Migrations' => dirname(__DIR__) . '/vendor/ktulchu/symfony-app-log/migrations'],

@@ -4,6 +4,10 @@ Opt-in, transactional PostgreSQL audit history for Doctrine ORM entities. No Yii
 
 Requires PHP 8.3+, Symfony 7.4/8, Doctrine ORM 3.5+ and DBAL 4.3+. The originating application uses Yii and PHP 8.1; this is an independent Symfony implementation rather than a framework port. PHP 8.1 is not a supported package target.
 
+## Project background
+
+The audit requirements and architectural approach grew out of years of work on private commercial applications. This Symfony/Doctrine package is a new, independent implementation of those established ideas, not a copy of the original Yii application. The earlier development history remains in a private commercial GitLab repository; the public GitHub history starts with this standalone implementation and its own tests and releases.
+
 ## Install
 
 The package is not registered on Packagist. Add the GitHub VCS repository:

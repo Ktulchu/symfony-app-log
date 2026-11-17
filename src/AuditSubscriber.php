@@ -128,7 +128,7 @@ final class AuditSubscriber implements EventSubscriber
             $column = $quote($meta->getColumnName($field));
             $select[] = "pg_typeof($column)::text AS t$i";
             $select[] = "$column::text AS r$i";
-            $select[] = "json_build_object('sql_null', $column IS NULL, 'value', $column, 'raw', $column::text)::text AS j$i";
+            $select[] = "json_build_object('sql_null', CAST(IF($column IS NULL, 'true', 'false') AS JSON), 'value', $column, 'raw', $column::text)::text AS j$i";
         }
         $identifier = $meta->getSingleIdentifierFieldName();
         if (!array_key_exists($identifier, $id)) { throw new \LogicException('Missing entity identifier.'); }

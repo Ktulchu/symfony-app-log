@@ -12,6 +12,9 @@ final class Version20261117000001 extends AbstractMigration
 {
     public function getDescription(): string { return 'Create independent MySQL 8.0 entity audit history'; }
 
+    // MySQL DDL implicitly commits; Doctrine must not wrap this migration in a transaction.
+    public function isTransactional(): bool { return false; }
+
     public function up(Schema $schema): void
     {
         if ($this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) { return; }

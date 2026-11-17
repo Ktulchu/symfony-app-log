@@ -1,0 +1,52 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: '8.3'
+            symfony: '^7.4'
+          - php: '8.4'
+            symfony: '^8.0'
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: audit
+          POSTGRES_PASSWORD: audit
+          POSTGRES_DB: audit
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U audit -d audit"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPASSWORD: audit
+      DATABASE_URL: 'postgresql://audit:audit@127.0.0.1:5432/fixture?serverVersion=17'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '${{ matrix.php }}'
+          extensions: pdo_pgsql, mbstring, dom
+          coverage: none
+          tools: composer:v2
+      - run: composer validate --strict
+      - run: composer update --no-interaction --prefer-dist --with 'symfony/framework-bundle:${{ matrix.symfony }}'
+      - run: composer audit
+      - run: composer test
+      - run: composer analyse
+      - run: psql -h 127.0.0.1 -U audit -d audit -c 'CREATE DATABASE fixture'
+      - run: composer install --no-interaction --prefer-dist
+        working-directory: fixtures/symfony
+      - run: php bin/console doctrine:migrations:migrate --no-interaction
+        working-directory: fixtures/symfony
+      - run: php smoke.php
+        working-directory: fixtures/symfony

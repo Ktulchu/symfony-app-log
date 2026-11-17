@@ -1,0 +1,14 @@
+{
+  "name": "ktulchu/app-log-integration-fixture",
+  "description": "Disposable Symfony installation smoke test",
+  "type": "project",
+  "license": "MIT",
+  "repositories": [{"type": "path", "url": "../..", "options": {"symlink": true}}],
+  "require": {
+    "php": "^8.3",
+    "ktulchu/symfony-app-log": "@dev",
+    "doctrine/doctrine-migrations-bundle": "^3.7"
+  },
+  "autoload": {"psr-4": {"Fixture\\": "src/"}},
+  "config": {"allow-plugins": false}
+}

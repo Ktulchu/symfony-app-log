@@ -1,0 +1,5 @@
+/vendor/
+/.phpunit.cache/
+/fixtures/symfony/vendor/
+/fixtures/symfony/var/
+/fixtures/symfony/composer.lock

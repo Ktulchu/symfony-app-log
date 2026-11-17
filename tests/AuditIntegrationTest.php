@@ -24,6 +24,7 @@ final class AuditIntegrationTest extends TestCase
 
     protected function setUp(): void
     {
+        if (getenv('MYSQL_HOST') && !getenv('PGHOST')) { self::markTestSkipped('PostgreSQL suite runs in the PostgreSQL CI job.'); }
         foreach (['audit_json' => RawJsonType::class, 'audit_jsonb' => RawJsonbType::class] as $name => $class) {
             if (!Type::hasType($name)) { Type::addType($name, $class); }
         }

@@ -3,14 +3,15 @@ declare(strict_types=1);
 
 namespace Ktulchu\AppLog\Migrations;
 
-use Doctrine\DBAL\Platforms\MySQL80Platform;
+use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\Migrations\AbstractMigration;
+use Ktulchu\AppLog\MySqlSupport;
 
 final class Version20261117000001 extends AbstractMigration
 {
-    public function getDescription(): string { return 'Create independent MySQL 8.0 entity audit history'; }
+    public function getDescription(): string { return 'Create independent MySQL 5.7.13+ entity audit history'; }
 
     // MySQL DDL implicitly commits; Doctrine must not wrap this migration in a transaction.
     public function isTransactional(): bool { return false; }
@@ -18,7 +19,7 @@ final class Version20261117000001 extends AbstractMigration
     public function up(Schema $schema): void
     {
         if ($this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) { return; }
-        $this->abortIf(!$this->connection->getDatabasePlatform() instanceof MySQL80Platform, 'MySQL 8.0 or PostgreSQL required');
+        $this->abortIf(!MySqlSupport::supports($this->connection), 'MySQL 5.7.13+ or PostgreSQL required');
         // Native JSON is not directly indexable in MySQL. The SHA-256 key hashes the
         // deterministic JSON-encoded single-field identifier map, not the business row.
         $this->addSql("CREATE TABLE app_log (
@@ -33,7 +34,7 @@ final class Version20261117000001 extends AbstractMigration
             INDEX app_log_entity_idx (entity_type, entity_key, id),
             INDEX app_log_occurred_idx (occurred_at),
             CONSTRAINT app_log_operation_check CHECK (operation IN ('insert', 'update', 'delete'))
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4");
     }
 
     public function down(Schema $schema): void

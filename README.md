@@ -1,6 +1,10 @@
 # Symfony App Log
 
-Opt-in, transactional PostgreSQL and MySQL 8.0+ audit history for Doctrine ORM entities. No Yii dependency, extra connection, queue, nested flush or Composer install hook.
+Opt-in, transactional PostgreSQL and MySQL 5.7.13+ audit history for Doctrine ORM entities. No Yii dependency, extra connection, queue, nested flush or Composer install hook.
+
+MySQL 5.7 compatibility is currently a development-branch change, not part of
+v0.2.0. See [the compatibility notes](docs/mysql-5.7.md) for exact-version tests,
+JSON differences, index prerequisites and the ignored CHECK constraint.
 
 Requires PHP 8.3+, Symfony 7.4/8, Doctrine ORM 3.5+ and DBAL 4.3+. The originating application uses Yii and PHP 8.1; this is an independent Symfony implementation rather than a framework port. PHP 8.1 is not a supported package target.
 
@@ -54,7 +58,7 @@ doctrine_migrations:
 php bin/console doctrine:migrations:migrate --no-interaction
 ```
 
-Review SQL before applying it to your database. Installing Composer dependencies never runs migrations automatically. On PostgreSQL, the original migration creates `app_log` with a JSONB identifier map, timestamptz and lossless JSON old/new documents. On MySQL 8.0+, the separate migration creates native JSON identifier and history columns plus an indexed SHA-256 `entity_key` for the deterministic serialized single-field identifier. The migration for the other supported database is a no-op. Neither migration changes application tables. Rolling back the appropriate migration **deletes all audit history**.
+Review SQL before applying it to your database. Installing Composer dependencies never runs migrations automatically. On PostgreSQL, the original migration creates `app_log` with a JSONB identifier map, timestamptz and lossless JSON old/new documents. On MySQL 5.7.13+, the separate migration creates native JSON identifier and history columns plus an indexed SHA-256 `entity_key` for the deterministic serialized single-field identifier. The migration for the other supported database is a no-op. Neither migration changes application tables. Rolling back the appropriate migration **deletes all audit history**.
 
 ## Select entities and exclude fields
 
@@ -92,7 +96,7 @@ The audit always reads database snapshots, including values normalized by immedi
 * `jsonb` uses PostgreSQL `IS DISTINCT FROM` equality. Reordered object keys and numerically equal numbers do not create history. Array order and primitive types matter.
 * SQL NULL, JSON null, `{}`, `[]`, absent keys, booleans, strings and arbitrary precision numbers remain distinguishable in storage.
 
-**MySQL 8.0+** supports native `JSON` (not `JSONB`). MySQL normalizes stored JSON, including object-key order, whitespace and duplicate keys. The audit compares MySQL's normalized stored JSON representation (not the original input text), avoiding precision loss from recasting large JSON numbers. MySQL may retain distinctions such as numeric representations even when their numeric values compare equal. The audit cannot recover original whitespace, key order or duplicate keys. SQL NULL and the JSON literal null remain distinct in `data.sql_null`; both scalar values and `data.raw` come from SQL without PHP JSON decoding. Limits of MySQL numeric JSON storage still apply.
+**MySQL 5.7.13+** supports native `JSON` (not `JSONB`). MySQL normalizes stored JSON, including object-key order, whitespace and duplicate keys. MySQL 5.7 keeps the first duplicate key; MySQL 8.0 keeps the last. The audit compares MySQL's normalized stored JSON representation (not the original input text), avoiding precision loss from recasting large JSON numbers. MySQL may retain distinctions such as numeric representations even when their numeric values compare equal. The audit cannot recover original whitespace, key order or duplicate keys. SQL NULL and the JSON literal null remain distinct in `data.sql_null`; both scalar values and `data.raw` come from SQL without PHP JSON decoding. Limits of MySQL numeric JSON storage still apply.
 
 Doctrine's normal `json` mapping can itself collapse `{}`/`[]`, SQL NULL/JSON null and large numbers during hydration. The audit cannot undo a lossy business write or detect a change Doctrine never schedules. Use these opt-in raw types when these distinctions matter:
 
@@ -194,17 +198,17 @@ For PostgreSQL, the JSONB lookup above remains unchanged. MySQL's `entity_key` i
 
 ## MySQL integration tests
 
-For the disposable MySQL 8.0 database named `audit`, with username/password `audit` and the environment variable `MYSQL_HOST` set:
+For a disposable MySQL 5.7.13 or MySQL 8.0 database named `audit`, with username/password `audit` and the environment variable `MYSQL_HOST` set:
 
 ```sh
 MYSQL_HOST=127.0.0.1 composer test
 ```
 
-The CI matrix includes independent PostgreSQL and MySQL 8.0 jobs. MySQL tests recreate their own fixture and audit tables; **never** run them against the CRM or any non-disposable database. The Symfony consumer fixture also exercises the MySQL migration and listener.
+The CI matrix includes independent PostgreSQL, MySQL 8.0 and exact MySQL 5.7.13 jobs. MySQL tests recreate their own fixture and audit tables; **never** run them against the CRM or any non-disposable database. The Symfony consumer fixture also exercises the MySQL migration and listener.
 
 ## Scope and limitations
 
-* PostgreSQL and MySQL 8.0+ support single-table entities with one scalar identifier; inheritance and composite/association identifiers fail explicitly. Other platforms, including MariaDB, are not supported.
+* PostgreSQL and MySQL 5.7.13+ support single-table entities with one scalar identifier; inheritance and composite/association identifiers fail explicitly. Other platforms, including MariaDB, are not supported.
 * Direct SQL, DQL bulk writes, database cascades, association-only changes and unmarked entities are not audited. No field-level recursive diff is generated.
 * All entity changes must be scheduled before this listener's `onFlush`; do not mutate audited entities or issue untracked writes in later flush listeners. Deferred triggers executed only at outer commit are outside the snapshot boundary.
 * Excluding fields is a security decision: choose exclusions before using the package. There is no automatic actor lookup, retention, encryption, soft-delete interpretation or domain identifier translation.

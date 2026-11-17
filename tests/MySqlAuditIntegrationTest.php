@@ -162,6 +162,32 @@ final class MySqlAuditIntegrationTest extends TestCase
         self::assertStringContainsString($b, $this->rows()[1]['new_values']);
     }
 
+    public function testDuplicateJsonKeysReflectTheActualServerVersion(): void
+    {
+        $r = $this->create('{"a":1,"a":2}');
+        $db = $this->em->getConnection();
+        $stored = (string)$db->fetchOne('SELECT CAST(document AS CHAR) FROM mysql_audit_fixture WHERE id = ?', [$r->id]);
+        $data = json_decode($this->rows()[0]['new_values'], true, flags: JSON_THROW_ON_ERROR)['document']['data'];
+        self::assertSame($stored, $data['raw']);
+        // MySQL 5.7 keeps the FIRST duplicate key; MySQL 8.0 keeps the LAST.
+        $expected = version_compare($db->getServerVersion(), '8.0.0', '<') ? 1 : 2;
+        self::assertSame($expected, $data['value']['a']);
+        $r->document = '{"a":' . $expected . '}';
+        $this->em->wrapInTransaction(fn () => $this->em->flush());
+        self::assertCount(1, $this->rows(), 'Rewriting the same stored JSON must be a no-op');
+    }
+
+    public function testAuditIndexUsesDynamicRowFormatAndIndexedLookup(): void
+    {
+        $r = $this->create();
+        $db = $this->em->getConnection();
+        self::assertSame('Dynamic', $db->fetchOne("SELECT ROW_FORMAT FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'app_log'"));
+        $plan = $db->fetchAssociative('EXPLAIN SELECT id FROM app_log FORCE INDEX (app_log_entity_idx) WHERE entity_type = ? AND entity_key = ? ORDER BY id',
+            [MySqlRecord::class, hash('sha256', json_encode(['id' => $r->id], JSON_THROW_ON_ERROR))]);
+        self::assertSame('app_log_entity_idx', $plan['key']);
+        self::assertSame('ref', $plan['type']);
+    }
+
     public function testOutOfRangeJsonNumbersReflectStoredMysqlValue(): void
     {
         // Beyond MySQL JSON's numeric precision, two input literals may be

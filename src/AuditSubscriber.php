@@ -5,7 +5,7 @@ namespace Ktulchu\AppLog;
 
 use Doctrine\Common\EventSubscriber;
 use Doctrine\DBAL\Connection;
-use Doctrine\DBAL\Platforms\MySQL80Platform;
+use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Event\OnFlushEventArgs;
@@ -40,13 +40,13 @@ final class AuditSubscriber implements EventSubscriber
                 $attributes = $meta->getReflectionClass()->getAttributes(Audited::class);
                 if ($attributes === []) { continue; }
                 $db = $em->getConnection();
-                if (!$db->getDatabasePlatform() instanceof PostgreSQLPlatform && !$db->getDatabasePlatform() instanceof MySQL80Platform) {
-                    throw new \LogicException('AppLog requires PostgreSQL or MySQL 8.0.');
+                if (!$db->getDatabasePlatform() instanceof PostgreSQLPlatform && !MySqlSupport::supports($db)) {
+                    throw new \LogicException('AppLog requires PostgreSQL or MySQL 5.7.13+.');
                 }
                 if (!$db->isTransactionActive()) {
                     throw new \LogicException('Audited flush requires an outer transaction; use EntityManager::wrapInTransaction().');
                 }
-                if ($db->getDatabasePlatform() instanceof MySQL80Platform) {
+                if ($db->getDatabasePlatform() instanceof MySQLPlatform) {
                     // Check before any business SQL, including inserts. MyISAM silently
                     // ignores rollback and cannot satisfy the audit transaction contract.
                     foreach ([[$meta->getSchemaName(), $meta->getTableName()], [null, 'app_log']] as [$schema, $table]) {
@@ -96,7 +96,7 @@ final class AuditSubscriber implements EventSubscriber
                 if ($old === []) { continue; }
             }
             $idJson = json_encode($id, JSON_THROW_ON_ERROR);
-            if ($db->getDatabasePlatform() instanceof MySQL80Platform) {
+            if ($db->getDatabasePlatform() instanceof MySQLPlatform) {
                 $db->executeStatement(
                     'INSERT INTO app_log (entity_type, entity_id, entity_key, operation, old_values, new_values) VALUES (?, ?, ?, ?, ?, ?)',
                     [$meta->name, $idJson, hash('sha256', $idJson), $operation, $this->document($old), $this->document($new)]
@@ -114,7 +114,7 @@ final class AuditSubscriber implements EventSubscriber
      *  @param array{type: string, raw: ?string, json: string} $new */
     private function different(Connection $db, array $old, array $new): bool
     {
-        if ($db->getDatabasePlatform() instanceof MySQL80Platform && $old['type'] === 'json') {
+        if ($db->getDatabasePlatform() instanceof MySQLPlatform && $old['type'] === 'json') {
             // MySQL returns a normalized stored representation. Compare that representation
             // without recasting parameter strings (which can round large JSON numbers).
             return $old['raw'] !== $new['raw'];
@@ -133,7 +133,7 @@ final class AuditSubscriber implements EventSubscriber
     private function snapshot(EntityManagerInterface $em, ClassMetadata $meta, array $fields, array $id, bool $lock): array
     {
         $db = $em->getConnection();
-        if ($db->getDatabasePlatform() instanceof MySQL80Platform) {
+        if ($db->getDatabasePlatform() instanceof MySQLPlatform) {
             return $this->mysqlSnapshot($em, $meta, $fields, $id, $lock);
         }
         $quote = $db->getDatabasePlatform()->quoteSingleIdentifier(...);

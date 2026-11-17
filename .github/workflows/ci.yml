@@ -5,6 +5,45 @@ on:
 permissions:
   contents: read
 jobs:
+  mysql5713:
+    runs-on: ubuntu-latest
+    env:
+      MYSQL_HOST: 127.0.0.1
+      DATABASE_URL: 'mysql://audit:audit@127.0.0.1:3306/fixture?serverVersion=5.7.13&charset=utf8mb4'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, mbstring, dom
+          coverage: none
+          tools: composer:v2
+      - name: Convert legacy official image format without changing MySQL
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y skopeo
+          skopeo copy --format v2s2 docker://docker.io/library/mysql:5.7.13 docker-archive:/tmp/mysql5713.tar:mysql5713-ci
+          docker load -i /tmp/mysql5713.tar
+          docker run -d --name mysql5713 -p 127.0.0.1:3306:3306 -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=audit -e MYSQL_USER=audit -e MYSQL_PASSWORD=audit mysql5713-ci --log-bin-trust-function-creators=1
+          for attempt in $(seq 1 60); do
+            # The entrypoint uses a temporary socket-only server during init.
+            # Require TCP and authentication to avoid its false readiness signal.
+            if docker exec mysql5713 mysql -h127.0.0.1 -uroot -proot -Nse 'SELECT VERSION()'; then break; fi
+            sleep 2
+          done
+          test "$(docker exec mysql5713 mysql -h127.0.0.1 -uroot -proot -Nse 'SELECT VERSION()')" = '5.7.13'
+          docker exec mysql5713 mysql -h127.0.0.1 -uroot -proot -e "CREATE DATABASE fixture; GRANT ALL ON fixture.* TO 'audit'@'%';"
+      - run: composer validate --strict
+      - run: composer install --no-interaction --prefer-dist
+      - run: composer audit
+      - run: composer test
+      - run: composer analyse
+      - run: composer install --no-interaction --prefer-dist
+        working-directory: fixtures/symfony
+      - run: php bin/console doctrine:migrations:migrate --no-interaction
+        working-directory: fixtures/symfony
+      - run: php mysql_smoke.php
+        working-directory: fixtures/symfony
   postgres:
     runs-on: ubuntu-latest
     strategy:

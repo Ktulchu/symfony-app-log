@@ -102,8 +102,9 @@ final class AuditSubscriber implements EventSubscriber
     private function different(Connection $db, array $old, array $new): bool
     {
         if ($db->getDatabasePlatform() instanceof MySQL80Platform && $old['type'] === 'json') {
-            // MySQL JSON values are normalized; compare them as JSON, not serialized text.
-            return !(bool) $db->fetchOne('SELECT CAST(? AS JSON) <=> CAST(? AS JSON)', [$old['raw'], $new['raw']]);
+            // MySQL returns a normalized stored representation. Compare that representation
+            // without recasting parameter strings (which can round large JSON numbers).
+            return $old['raw'] !== $new['raw'];
         }
         if ($old['type'] === 'jsonb') {
             return (bool) $db->fetchOne('SELECT CAST(? AS jsonb) IS DISTINCT FROM CAST(? AS jsonb)', [$old['raw'], $new['raw']]);

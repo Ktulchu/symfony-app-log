@@ -24,6 +24,7 @@ final class AuditIntegrationTest extends TestCase
 
     protected function setUp(): void
     {
+        if (getenv('MYSQL_HOST') && !getenv('PGHOST')) { self::markTestSkipped('PostgreSQL suite runs in the PostgreSQL CI job.'); }
         foreach (['audit_json' => RawJsonType::class, 'audit_jsonb' => RawJsonbType::class] as $name => $class) {
             if (!Type::hasType($name)) { Type::addType($name, $class); }
         }
@@ -40,7 +41,7 @@ final class AuditIntegrationTest extends TestCase
         $factory->getMigrator()->migrate($plan, new MigratorConfiguration());
     }
 
-    protected function tearDown(): void { $this->em->getConnection()->close(); }
+    protected function tearDown(): void { if (isset($this->em)) { $this->em->getConnection()->close(); } }
 
     private function create(): Record
     {

@@ -50,3 +50,51 @@ jobs:
         working-directory: fixtures/symfony
       - run: php smoke.php
         working-directory: fixtures/symfony
+  mysql:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: '8.3'
+            symfony: '^7.4'
+          - php: '8.4'
+            symfony: '^8.0'
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: audit
+          MYSQL_USER: audit
+          MYSQL_PASSWORD: audit
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uaudit -paudit"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      MYSQL_HOST: 127.0.0.1
+      DATABASE_URL: 'mysql://audit:audit@127.0.0.1:3306/audit?serverVersion=8.0.36&charset=utf8mb4'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '${{ matrix.php }}'
+          extensions: pdo_mysql, mbstring, dom
+          coverage: none
+          tools: composer:v2
+      - run: composer validate --strict
+      - run: composer update --no-interaction --prefer-dist --with 'symfony/framework-bundle:${{ matrix.symfony }}'
+      - run: composer audit
+      - name: Allow triggers in disposable MySQL CI service
+        run: docker exec "${{ job.services.mysql.id }}" mysql -uroot -proot -e "SET GLOBAL log_bin_trust_function_creators = 1"
+      - run: composer test
+      - run: composer analyse
+      - name: Clear disposable tables for Symfony consumer smoke test
+        run: php -r '$db = new PDO("mysql:host=127.0.0.1;dbname=audit", "audit", "audit"); $db->exec("DROP TABLE IF EXISTS app_log, mysql_audit_fixture, mysql_plain_fixture, doctrine_migration_versions");'
+      - run: composer install --no-interaction --prefer-dist
+        working-directory: fixtures/symfony
+      - run: php bin/console doctrine:migrations:migrate --no-interaction
+        working-directory: fixtures/symfony
+      - run: php mysql_smoke.php
+        working-directory: fixtures/symfony

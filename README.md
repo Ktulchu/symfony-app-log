@@ -2,11 +2,18 @@
 
 Opt-in, transactional PostgreSQL and MySQL 5.7.13+ audit history for Doctrine ORM entities. No Yii dependency, extra connection, queue, nested flush or Composer install hook.
 
-MySQL 5.7 compatibility is currently a development-branch change, not part of
-v0.2.0. See [the compatibility notes](docs/mysql-5.7.md) for exact-version tests,
+MySQL 5.7.13 compatibility is available starting with v0.3.0, not v0.2.0.
+See [the compatibility notes](docs/mysql-5.7.md) for exact-version tests,
 JSON differences, index prerequisites and the ignored CHECK constraint.
 
 Requires PHP 8.3+, Symfony 7.4/8, Doctrine ORM 3.5+ and DBAL 4.3+. The originating application uses Yii and PHP 8.1; this is an independent Symfony implementation rather than a framework port. PHP 8.1 is not a supported package target.
+
+## What's new in v0.3.0
+
+**Added verified MySQL 5.7.13 support**, retaining MySQL 8.0 and PostgreSQL.
+The migration explicitly creates the history table with `ROW_FORMAT=DYNAMIC`.
+InnoDB and outer transactions remain mandatory. Exact-version CI covers JSON
+differences, NULL distinctions, indexed history and atomic rollback.
 
 ## What's new in v0.2.0
 
@@ -22,7 +29,7 @@ The package is not registered on Packagist. Add the GitHub VCS repository:
 
 ```sh
 composer config repositories.app-log vcs https://github.com/Ktulchu/symfony-app-log
-composer require ktulchu/symfony-app-log:^0.2
+composer require ktulchu/symfony-app-log:^0.3
 composer require doctrine/doctrine-migrations-bundle
 ```
 

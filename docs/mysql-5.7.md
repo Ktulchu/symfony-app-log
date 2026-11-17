@@ -1,7 +1,7 @@
-# MySQL 5.7.13 compatibility (unreleased)
+# MySQL 5.7.13 compatibility (v0.3.0)
 
-v0.2.0 rejects MySQL 5.7 in its listener and both migration paths. The development
-change admits MySQLPlatform only when the actual server version is at least
+v0.2.0 rejects MySQL 5.7 in its listener and both migration paths. Starting with
+v0.3.0, MySQLPlatform is admitted only when the actual server version is at least
 5.7.13; MariaDB and older MySQL remain rejected. PostgreSQL behavior is unchanged.
 
 ## Verified environment and SQL

@@ -4,6 +4,10 @@ Opt-in, transactional PostgreSQL and MySQL 8.0+ audit history for Doctrine ORM e
 
 Requires PHP 8.3+, Symfony 7.4/8, Doctrine ORM 3.5+ and DBAL 4.3+. The originating application uses Yii and PHP 8.1; this is an independent Symfony implementation rather than a framework port. PHP 8.1 is not a supported package target.
 
+## What's new in v0.2.0
+
+**Added MySQL 8.0+ support** alongside PostgreSQL, with native MySQL `JSON` snapshots, database-specific migrations and indexed entity history lookup. The audit preserves SQL NULL versus JSON null, transactional INSERT/UPDATE/DELETE history and rollback behavior. On MySQL, audited tables and `app_log` must use **InnoDB**. PostgreSQL `json`/`jsonb` behavior remains unchanged.
+
 ## Project background
 
 The audit requirements and architectural approach grew out of years of work on private commercial applications. This Symfony/Doctrine package is a new, independent implementation of those established ideas, not a copy of the original Yii application. The earlier development history remains in a private commercial GitLab repository; the public GitHub history starts with this standalone implementation and its own tests and releases.

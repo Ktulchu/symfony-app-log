@@ -149,16 +149,30 @@ final class MySqlAuditIntegrationTest extends TestCase
         self::assertCount(5, $this->rows());
     }
 
-    public function testLargeJsonIntegerIsNotRoundedByPhp(): void
+    public function testExact64BitJsonIntegersAreNotRoundedByPhp(): void
     {
-        $a = '123456789012345678901234567890';
-        $b = '123456789012345678901234567891';
+        // MySQL documents exact comparison for adjacent signed 64-bit integers.
+        $a = '9223372036854775805';
+        $b = '9223372036854775806';
         $r = $this->create('{"n":' . $a . '}');
         $r->document = '{"n":' . $b . '}';
         $this->em->wrapInTransaction(fn () => $this->em->flush());
         self::assertCount(2, $this->rows());
         self::assertStringContainsString($a, $this->rows()[1]['old_values']);
         self::assertStringContainsString($b, $this->rows()[1]['new_values']);
+    }
+
+    public function testOutOfRangeJsonNumbersReflectStoredMysqlValue(): void
+    {
+        // Beyond MySQL JSON's numeric precision, two input literals may be
+        // normalized to the same stored value; the audit cannot reconstruct them.
+        $r = $this->create('{"n":123456789012345678901234567890}');
+        $db = $this->em->getConnection();
+        $before = $db->fetchOne('SELECT CAST(document AS CHAR) FROM mysql_audit_fixture WHERE id = ?', [$r->id]);
+        $r->document = '{"n":123456789012345678901234567891}';
+        $this->em->wrapInTransaction(fn () => $this->em->flush());
+        $after = $db->fetchOne('SELECT CAST(document AS CHAR) FROM mysql_audit_fixture WHERE id = ?', [$r->id]);
+        self::assertCount($before === $after ? 1 : 2, $this->rows());
     }
 
     public function testRollbackAndUnauditedEntities(): void

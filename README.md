@@ -10,11 +10,11 @@ The audit requirements and architectural approach grew out of years of work on p
 
 ## Install
 
-The package is not registered on Packagist. Add the GitHub VCS repository (the unreleased MySQL support lives in a separate development branch until tagged):
+The package is not registered on Packagist. Add the GitHub VCS repository:
 
 ```sh
 composer config repositories.app-log vcs https://github.com/Ktulchu/symfony-app-log
-composer require ktulchu/symfony-app-log:^0.1
+composer require ktulchu/symfony-app-log:^0.2
 composer require doctrine/doctrine-migrations-bundle
 ```
 
@@ -106,6 +106,10 @@ Entity values are valid JSON **strings** (`'{}'`, `'[]'`, `'null'`, `'1'`, `'"1"
 ## Transaction contract
 
 Every flush involving audited entities must run inside an outer transaction:
+
+On MySQL, both the audited business tables and `app_log` must use **InnoDB**.
+The listener checks their engines before business SQL and rejects missing or
+non-transactional tables. A transaction wrapper cannot make MyISAM writes atomic.
 
 ```php
 $entityManager->wrapInTransaction(function ($em) use ($example): void {

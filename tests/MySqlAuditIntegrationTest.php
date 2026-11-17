@@ -228,6 +228,35 @@ final class MySqlAuditIntegrationTest extends TestCase
         self::assertCount(0, $this->rows());
     }
 
+    public function testNonTransactionalBusinessTableIsRejectedBeforeInsert(): void
+    {
+        $db = $this->em->getConnection();
+        $db->executeStatement('ALTER TABLE mysql_audit_fixture ENGINE=MyISAM');
+        try {
+            $this->create();
+            self::fail('Expected InnoDB requirement');
+        } catch (\LogicException $e) {
+            self::assertStringContainsString('InnoDB', $e->getMessage());
+        }
+        self::assertSame(0, (int)$db->fetchOne('SELECT count(*) FROM mysql_audit_fixture'));
+        self::assertCount(0, $this->rows());
+    }
+
+    public function testNonTransactionalAuditTableIsRejectedBeforeBusinessWrite(): void
+    {
+        $db = $this->em->getConnection();
+        // MyISAM does not support the JSON columns in app_log on all MySQL versions.
+        $db->executeStatement('DROP TABLE app_log');
+        $db->executeStatement('CREATE TABLE app_log (id INT) ENGINE=MyISAM');
+        try {
+            $this->create();
+            self::fail('Expected InnoDB requirement');
+        } catch (\LogicException $e) {
+            self::assertStringContainsString('InnoDB', $e->getMessage());
+        }
+        self::assertSame(0, (int)$db->fetchOne('SELECT count(*) FROM mysql_audit_fixture'));
+    }
+
     public function testMysqlDatabaseTriggerNormalizationIsAudited(): void
     {
         $db = $this->em->getConnection();
@@ -236,6 +265,21 @@ final class MySqlAuditIntegrationTest extends TestCase
         $this->em->wrapInTransaction(function () use ($r): void { $r->title = 'updated'; });
         $new = json_decode($this->rows()[1]['new_values'], true, flags: JSON_THROW_ON_ERROR);
         self::assertSame('UPDATED', $new['title']['data']['value']);
+    }
+
+    public function testAuditInsertFailureRollsBackBusinessInsert(): void
+    {
+        $db = $this->em->getConnection();
+        $db->executeStatement("CREATE TRIGGER reject_audit BEFORE INSERT ON app_log FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected audit failure'");
+        try {
+            $this->create();
+            self::fail('Expected audit insertion failure');
+        } catch (\Doctrine\DBAL\Exception $e) {
+            self::assertStringContainsString('injected audit failure', $e->getMessage());
+        }
+        self::assertSame(0, (int)$db->fetchOne('SELECT count(*) FROM mysql_audit_fixture'));
+        self::assertCount(0, $this->rows());
+        self::assertFalse($this->em->isOpen());
     }
 
     public function testCompetingTransactionsRespectRowLock(): void

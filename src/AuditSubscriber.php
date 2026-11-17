@@ -46,6 +46,19 @@ final class AuditSubscriber implements EventSubscriber
                 if (!$db->isTransactionActive()) {
                     throw new \LogicException('Audited flush requires an outer transaction; use EntityManager::wrapInTransaction().');
                 }
+                if ($db->getDatabasePlatform() instanceof MySQL80Platform) {
+                    // Check before any business SQL, including inserts. MyISAM silently
+                    // ignores rollback and cannot satisfy the audit transaction contract.
+                    foreach ([[$meta->getSchemaName(), $meta->getTableName()], [null, 'app_log']] as [$schema, $table]) {
+                        $engine = $db->fetchOne(
+                            'SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ?',
+                            [$schema, $table]
+                        );
+                        if (!is_string($engine) || strcasecmp($engine, 'InnoDB') !== 0) {
+                            throw new \LogicException('AppLog requires InnoDB for audited and audit tables: ' . $table);
+                        }
+                    }
+                }
                 if ($meta->inheritanceType !== ClassMetadata::INHERITANCE_TYPE_NONE || $meta->isIdentifierComposite || $meta->containsForeignIdentifier) {
                     throw new \LogicException('AppLog v0.1 supports single-table entities with one scalar identifier.');
                 }

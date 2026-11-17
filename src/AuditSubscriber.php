@@ -5,7 +5,7 @@ namespace Ktulchu\AppLog;
 
 use Doctrine\Common\EventSubscriber;
 use Doctrine\DBAL\Connection;
-use Doctrine\DBAL\Platforms\MySQLPlatform;
+use Doctrine\DBAL\Platforms\MySQL80Platform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Event\OnFlushEventArgs;
@@ -40,7 +40,7 @@ final class AuditSubscriber implements EventSubscriber
                 $attributes = $meta->getReflectionClass()->getAttributes(Audited::class);
                 if ($attributes === []) { continue; }
                 $db = $em->getConnection();
-                if (!$db->getDatabasePlatform() instanceof PostgreSQLPlatform && !$db->getDatabasePlatform() instanceof MySQLPlatform) {
+                if (!$db->getDatabasePlatform() instanceof PostgreSQLPlatform && !$db->getDatabasePlatform() instanceof MySQL80Platform) {
                     throw new \LogicException('AppLog requires PostgreSQL or MySQL 8.0.');
                 }
                 if (!$db->isTransactionActive()) {
@@ -83,7 +83,7 @@ final class AuditSubscriber implements EventSubscriber
                 if ($old === []) { continue; }
             }
             $idJson = json_encode($id, JSON_THROW_ON_ERROR);
-            if ($db->getDatabasePlatform() instanceof MySQLPlatform) {
+            if ($db->getDatabasePlatform() instanceof MySQL80Platform) {
                 $db->executeStatement(
                     'INSERT INTO app_log (entity_type, entity_id, entity_key, operation, old_values, new_values) VALUES (?, ?, ?, ?, ?, ?)',
                     [$meta->name, $idJson, hash('sha256', $idJson), $operation, $this->document($old), $this->document($new)]
@@ -101,7 +101,7 @@ final class AuditSubscriber implements EventSubscriber
      *  @param array{type: string, raw: ?string, json: string} $new */
     private function different(Connection $db, array $old, array $new): bool
     {
-        if ($db->getDatabasePlatform() instanceof MySQLPlatform && $old['type'] === 'json') {
+        if ($db->getDatabasePlatform() instanceof MySQL80Platform && $old['type'] === 'json') {
             // MySQL JSON values are normalized; compare them as JSON, not serialized text.
             return !(bool) $db->fetchOne('SELECT CAST(? AS JSON) <=> CAST(? AS JSON)', [$old['raw'], $new['raw']]);
         }
@@ -119,7 +119,7 @@ final class AuditSubscriber implements EventSubscriber
     private function snapshot(EntityManagerInterface $em, ClassMetadata $meta, array $fields, array $id, bool $lock): array
     {
         $db = $em->getConnection();
-        if ($db->getDatabasePlatform() instanceof MySQLPlatform) {
+        if ($db->getDatabasePlatform() instanceof MySQL80Platform) {
             return $this->mysqlSnapshot($em, $meta, $fields, $id, $lock);
         }
         $quote = $db->getDatabasePlatform()->quoteSingleIdentifier(...);

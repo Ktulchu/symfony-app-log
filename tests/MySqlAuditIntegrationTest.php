@@ -12,6 +12,7 @@ use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\ORMSetup;
 use Doctrine\ORM\Tools\SchemaTool;
 use Ktulchu\AppLog\AuditSubscriber;
+use Ktulchu\AppLog\Migrations\Version20261118000000;
 use Ktulchu\AppLog\Migrations\Version20261117000001;
 use Ktulchu\AppLog\RawJsonType;
 use PHPUnit\Framework\TestCase;
@@ -19,6 +20,7 @@ use PHPUnit\Framework\TestCase;
 final class MySqlAuditIntegrationTest extends TestCase
 {
     private EntityManager $em;
+    private AuditSubscriber $audit;
 
     private static function dbParams(): array
     {
@@ -45,7 +47,8 @@ final class MySqlAuditIntegrationTest extends TestCase
         $config = ORMSetup::createAttributeMetadataConfiguration([__DIR__], true);
         if (PHP_VERSION_ID >= 80400) { $config->enableNativeLazyObjects(true); }
         $this->em = new EntityManager($db, $config);
-        $this->em->getEventManager()->addEventSubscriber(new AuditSubscriber());
+        $this->audit = new AuditSubscriber();
+        $this->em->getEventManager()->addEventSubscriber($this->audit);
         (new SchemaTool($this->em))->createSchema([
             $this->em->getClassMetadata(MySqlRecord::class),
             $this->em->getClassMetadata(MySqlPlainRecord::class),
@@ -56,7 +59,7 @@ final class MySqlAuditIntegrationTest extends TestCase
         );
         $factory->getMetadataStorage()->ensureInitialized();
         $plan = $factory->getMigrationPlanCalculator()->getPlanUntilVersion(
-            new \Doctrine\Migrations\Version\Version(Version20261117000001::class)
+            new \Doctrine\Migrations\Version\Version(Version20261118000000::class)
         );
         $factory->getMigrator()->migrate($plan, new MigratorConfiguration());
     }
@@ -77,6 +80,20 @@ final class MySqlAuditIntegrationTest extends TestCase
     private function rows(): array
     {
         return $this->em->getConnection()->fetchAllAssociative('SELECT * FROM app_log ORDER BY id');
+    }
+
+
+    public function testScopedJobSourceRestoredOnMysql(): void
+    {
+        $r = $this->create();
+        self::assertNull($this->rows()[0]['source_type']);
+        $this->audit->withSourceType('queue:ImportJob', function () use ($r): void {
+            $r->title = 'imported';
+            $this->em->wrapInTransaction(fn () => $this->em->flush());
+        });
+        $r->title = 'manual';
+        $this->em->wrapInTransaction(fn () => $this->em->flush());
+        self::assertSame([null, 'queue:ImportJob', null], array_column($this->rows(), 'source_type'));
     }
 
     public function testMysqlMigrationAndIndexedEntityLookup(): void

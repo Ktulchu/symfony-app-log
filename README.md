@@ -25,10 +25,9 @@ The audit requirements and architectural approach grew out of years of work on p
 
 ## Install
 
-The package is not registered on Packagist. Add the GitHub VCS repository:
+The package is available on [Packagist](https://packagist.org/packages/ktulchu/symfony-app-log):
 
 ```sh
-composer config repositories.app-log vcs https://github.com/Ktulchu/symfony-app-log
 composer require ktulchu/symfony-app-log:^0.3
 composer require doctrine/doctrine-migrations-bundle
 ```

@@ -45,11 +45,48 @@ services:
             - { name: doctrine.event_listener, event: onFlush, connection: default, priority: -1024 }
             - { name: doctrine.event_listener, event: postFlush, connection: default, priority: -1024 }
             - { name: doctrine.event_listener, event: onClear, connection: default }
+            - { name: kernel.event_listener, event: console.command, method: onConsoleCommand }
+            - { name: kernel.event_listener, event: console.terminate, method: onConsoleTerminate }
+            - { name: kernel.event_listener, event: console.error, method: onConsoleError }
 ```
 
 Register once for the intended entity manager/connection. Do not also register it as a subscriber. The listener takes its DBAL connection from that entity manager.
 
 For PHP 8.4+ with Symfony 8 and DoctrineBundle 2, enable `doctrine.orm.enable_native_lazy_objects: true`. DoctrineBundle 3 uses native lazy objects automatically and removes the old proxy options. Symfony 8 no longer provides the older lazy ghost implementation. The fixture handles both bundle versions.
+
+## Audit source (console and queue)
+
+A nullable `source_type` column records **where** an audited change came from.
+It does not replace user identity. Existing history and ordinary Web/REST
+writes without an explicit source remain `NULL`.
+
+Register the three `kernel.event_listener` tags shown above. Symfony then
+records `console:<command>` (e.g. `console:app:sync-orders`) automatically
+using Symfony Console events rather than CLI argument guessing. The source
+is cleared after command completion or error.
+
+A Messenger worker runs under a command such as `messenger:consume`.
+To identify the actual job instead of the worker command, scope its writes:
+
+```php
+// In a Messenger handler with the registered AuditSubscriber injected:
+$audit->withSourceType('queue:' . $message::class, function () use ($entityManager, $entity): void {
+    $entityManager->wrapInTransaction(function () use ($entity): void {
+        $entity->status = 'processed';
+    });
+});
+```
+
+`withSourceType()` accepts a nonempty source of at most 255 bytes.
+It restores the previous value even on exceptions or nested calls,
+preventing attribution from leaking to subsequent worker jobs.
+The source is captured at `onFlush` and saved with the same transaction.
+No system user, extra connection, queue dependency or session is introduced.
+
+**Upgrade:** apply the additive `Version20261118000000` migration on
+PostgreSQL or MySQL 5.7.13+ **before enabling the new listener**.
+It adds a nullable column without rebuilding history. MySQL DDL commits
+implicitly; review it before production rollout.
 
 ## Migrate
 
@@ -64,7 +101,7 @@ doctrine_migrations:
 php bin/console doctrine:migrations:migrate --no-interaction
 ```
 
-Review SQL before applying it to your database. Installing Composer dependencies never runs migrations automatically. On PostgreSQL, the original migration creates `app_log` with a JSONB identifier map, timestamptz and lossless JSON old/new documents. On MySQL 5.7.13+, the separate migration creates native JSON identifier and history columns plus an indexed SHA-256 `entity_key` for the deterministic serialized single-field identifier. The migration for the other supported database is a no-op. Neither migration changes application tables. Rolling back the appropriate migration **deletes all audit history**.
+Review SQL before applying it to your database. Installing Composer dependencies never runs migrations automatically. The additive `source_type` migration preserves existing audit rows. On PostgreSQL, the original migration creates `app_log` with a JSONB identifier map, timestamptz and lossless JSON old/new documents. On MySQL 5.7.13+, the separate migration creates native JSON identifier and history columns plus an indexed SHA-256 `entity_key` for the deterministic serialized single-field identifier. The migration for the other supported database is a no-op. Neither migration changes application tables. Rolling back the appropriate migration **deletes all audit history**.
 
 ## Select entities and exclude fields
 

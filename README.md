@@ -8,6 +8,11 @@ JSON differences, index prerequisites and the ignored CHECK constraint.
 
 Requires PHP 8.3+, Symfony 7.4/8, Doctrine ORM 3.5+ and DBAL 4.3+. The originating application uses Yii and PHP 8.1; this is an independent Symfony implementation rather than a framework port. PHP 8.1 is not a supported package target.
 
+## What's new in v0.4.0
+
+**Audit source attribution:** a new nullable `source_type` column identifies the origin of a change without inventing a system user. Symfony Console commands can be recorded as `console:<command>` using three event-listener tags; Messenger handlers may explicitly identify the actual job via the exception-safe `withSourceType('queue:...', ...)` scope. The source is captured at `onFlush` and written with the same transaction. No Messenger dependency or extra query is required. Existing history keeps `NULL` after the additive PostgreSQL/MySQL migration `Version20261118000000`.
+
+
 ## What's new in v0.3.0
 
 **Added verified MySQL 5.7.13 support**, retaining MySQL 8.0 and PostgreSQL.
@@ -28,7 +33,7 @@ The audit requirements and architectural approach grew out of years of work on p
 The package is available on [Packagist](https://packagist.org/packages/ktulchu/symfony-app-log):
 
 ```sh
-composer require ktulchu/symfony-app-log:^0.3
+composer require ktulchu/symfony-app-log:^0.4
 composer require doctrine/doctrine-migrations-bundle
 ```
 
@@ -50,7 +55,7 @@ services:
             - { name: kernel.event_listener, event: console.error, method: onConsoleError }
 ```
 
-Register once for the intended entity manager/connection. Do not also register it as a subscriber. The listener takes its DBAL connection from that entity manager.
+Register once for the intended entity manager/connection. Do not also register it as a subscriber. The **same service instance** must receive both Doctrine and Console events and be injected into any Messenger handler using `withSourceType()`. The listener takes its DBAL connection from that entity manager. For an existing CRM already registering the three Doctrine tags, add only the three Console tags; do not add a second service.
 
 For PHP 8.4+ with Symfony 8 and DoctrineBundle 2, enable `doctrine.orm.enable_native_lazy_objects: true`. DoctrineBundle 3 uses native lazy objects automatically and removes the old proxy options. Symfony 8 no longer provides the older lazy ghost implementation. The fixture handles both bundle versions.
 
@@ -83,8 +88,8 @@ preventing attribution from leaking to subsequent worker jobs.
 The source is captured at `onFlush` and saved with the same transaction.
 No system user, extra connection, queue dependency or session is introduced.
 
-**Upgrade:** apply the additive `Version20261118000000` migration on
-PostgreSQL or MySQL 5.7.13+ **before enabling the new listener**.
+**Upgrade from v0.3.0:** apply the additive `Version20261118000000` migration on
+PostgreSQL or MySQL 5.7.13+ **before restarting application processes with the v0.4.0 listener**.
 It adds a nullable column without rebuilding history. MySQL DDL commits
 implicitly; review it before production rollout.
 
@@ -186,7 +191,7 @@ There is one row per persisted entity operation per flush. Update documents incl
 
 ```php
 $rows = $connection->fetchAllAssociative(
-    'SELECT operation, occurred_at, old_values, new_values FROM app_log
+    'SELECT operation, source_type, occurred_at, old_values, new_values FROM app_log
      WHERE entity_type = ? AND entity_id = CAST(? AS jsonb) ORDER BY id',
     [Example::class, json_encode(['id' => $id], JSON_THROW_ON_ERROR)]
 );
@@ -231,7 +236,7 @@ MySQL does not index `entity_id` directly because it is native JSON. For the sup
 ```php
 $idJson = json_encode(['id' => $id], JSON_THROW_ON_ERROR); // Replace 'id' with the mapped identifier field.
 $rows = $connection->fetchAllAssociative(
-    'SELECT operation, occurred_at, old_values, new_values FROM app_log
+    'SELECT operation, source_type, occurred_at, old_values, new_values FROM app_log
      WHERE entity_type = ? AND entity_key = ? ORDER BY id',
     [Example::class, hash('sha256', $idJson)]
 );

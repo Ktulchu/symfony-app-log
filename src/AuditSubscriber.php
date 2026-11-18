@@ -12,15 +12,59 @@ use Doctrine\ORM\Event\OnFlushEventArgs;
 use Doctrine\ORM\Event\PostFlushEventArgs;
 use Doctrine\ORM\Events;
 use Doctrine\ORM\Mapping\ClassMetadata;
+use Symfony\Component\Console\Event\ConsoleCommandEvent;
+use Symfony\Component\Console\Event\ConsoleErrorEvent;
+use Symfony\Component\Console\Event\ConsoleTerminateEvent;
 
 /** Database snapshots deliberately bypass lossy PHP JSON hydration. */
 final class AuditSubscriber implements EventSubscriber
 {
-    /** @var list<array{entity: object, meta: ClassMetadata<object>, fields: list<string>, id: array<string, mixed>, old: array<string, array{type: string, raw: ?string, json: string}>, operation: string}> */
+    /** @var list<array{entity: object, meta: ClassMetadata<object>, fields: list<string>, id: array<string, mixed>, old: array<string, array{type: string, raw: ?string, json: string}>, operation: string, sourceType: ?string}> */
     private array $pending = [];
 
     /** @var array<string, array<string, string>> */
     private array $mysqlColumnTypes = [];
+
+    private ?string $consoleSourceType = null;
+    private ?string $sourceTypeOverride = null;
+
+    public function onConsoleCommand(ConsoleCommandEvent $event): void
+    {
+        $name = $event->getCommand()?->getName();
+        $source = is_string($name) && $name !== '' ? 'console:' . $name : 'console';
+        self::validateSourceType($source);
+        $this->consoleSourceType = $source;
+    }
+
+    public function onConsoleTerminate(ConsoleTerminateEvent $event): void
+    {
+        $this->consoleSourceType = null;
+    }
+
+    public function onConsoleError(ConsoleErrorEvent $event): void
+    {
+        $this->consoleSourceType = null;
+    }
+
+    /** Run one job with a source that cannot leak into subsequent worker jobs. */
+    public function withSourceType(string $sourceType, callable $work): mixed
+    {
+        self::validateSourceType($sourceType);
+        $previous = $this->sourceTypeOverride;
+        $this->sourceTypeOverride = $sourceType;
+        try {
+            return $work();
+        } finally {
+            $this->sourceTypeOverride = $previous;
+        }
+    }
+
+    private static function validateSourceType(string $sourceType): void
+    {
+        if ($sourceType === '' || strlen($sourceType) > 255) {
+            throw new \LogicException('source_type must contain 1..255 bytes.');
+        }
+    }
 
     public function getSubscribedEvents(): array
     {
@@ -73,7 +117,8 @@ final class AuditSubscriber implements EventSubscriber
                 if ($fields === []) { continue; }
                 $id = $meta->getIdentifierValues($entity);
                 $old = $operation === 'insert' ? [] : $this->snapshot($em, $meta, $fields, $id, true);
-                $this->pending[] = compact('entity', 'meta', 'fields', 'id', 'old', 'operation');
+                $sourceType = $this->sourceTypeOverride ?? $this->consoleSourceType;
+                $this->pending[] = compact('entity', 'meta', 'fields', 'id', 'old', 'operation', 'sourceType');
             }
         }
     }
@@ -98,13 +143,13 @@ final class AuditSubscriber implements EventSubscriber
             $idJson = json_encode($id, JSON_THROW_ON_ERROR);
             if ($db->getDatabasePlatform() instanceof MySQLPlatform) {
                 $db->executeStatement(
-                    'INSERT INTO app_log (entity_type, entity_id, entity_key, operation, old_values, new_values) VALUES (?, ?, ?, ?, ?, ?)',
-                    [$meta->name, $idJson, hash('sha256', $idJson), $operation, $this->document($old), $this->document($new)]
+                    'INSERT INTO app_log (entity_type, entity_id, entity_key, operation, old_values, new_values, source_type) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    [$meta->name, $idJson, hash('sha256', $idJson), $operation, $this->document($old), $this->document($new), $item['sourceType']]
                 );
             } else {
                 $db->executeStatement(
-                    'INSERT INTO app_log (entity_type, entity_id, operation, old_values, new_values) VALUES (?, CAST(? AS jsonb), ?, CAST(? AS json), CAST(? AS json))',
-                    [$meta->name, $idJson, $operation, $this->document($old), $this->document($new)]
+                    'INSERT INTO app_log (entity_type, entity_id, operation, old_values, new_values, source_type) VALUES (?, CAST(? AS jsonb), ?, CAST(? AS json), CAST(? AS json), ?)',
+                    [$meta->name, $idJson, $operation, $this->document($old), $this->document($new), $item['sourceType']]
                 );
             }
         }

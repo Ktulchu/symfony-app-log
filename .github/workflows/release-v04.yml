@@ -1,0 +1,58 @@
+name: Publish symfony-app-log v0.4.0
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish v0.4.0 for the verified main commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          TAG: v0.4.0
+        run: |
+          set -euo pipefail
+          subject="$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA" --jq '.commit.message | split("\n")[0]')"
+          if [[ "$subject" != "release: v0.4.0" ]]; then
+            echo "Not the intended release commit; skipping."
+            exit 0
+          fi
+          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$main_sha" != "$SHA" ]]; then
+            echo "Refusing to tag a commit other than current main HEAD." >&2
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists; no changes."
+            exit 0
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag already exists without a release; refusing to retarget." >&2
+            exit 1
+          fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" \
+            --title "v0.4.0 — Audit source attribution" \
+            --notes-file - <<'NOTES'
+          ## What's new
+          - Added nullable `app_log.source_type` for PostgreSQL and MySQL 5.7.13+/8.0, retaining existing history.
+          - Symfony Console commands can automatically write `console:<command>` through three explicit `kernel.event_listener` tags.
+          - Messenger handlers can use `withSourceType('queue:JobClass', fn() => ...)`; nested calls and exceptions restore the previous source.
+          - The source is captured at `onFlush` and inserted at `postFlush` without a separate SQL lookup. No Messenger dependency is introduced.
+
+          ## Upgrade notes
+          - Run additive migration `Ktulchu\AppLog\Migrations\Version20261118000000` **before starting application processes with the updated listener**.
+          - If your app already registers `AuditSubscriber` for Doctrine events, **add** the three Console event tags to the **same service**; do not duplicate it.
+          - Existing rows retain `source_type = NULL`; unscoped HTTP writes also remain `NULL`.
+          - Tested by GitHub CI on PHP 8.3/8.4, Symfony 7.4/8, PostgreSQL, MySQL 8 and exact MySQL 5.7.13; independently exercised in an isolated Symfony CRM copy with two MySQL versions.
+          NOTES

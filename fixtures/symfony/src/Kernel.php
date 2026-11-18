@@ -34,9 +34,13 @@ final class Kernel extends BaseKernel
             $container->loadFromExtension('doctrine_migrations', [
                 'migrations_paths' => ['Ktulchu\\AppLog\\Migrations' => dirname(__DIR__) . '/vendor/ktulchu/symfony-app-log/migrations'],
             ]);
-            $definition = $container->register(AuditSubscriber::class);
+            $definition = $container->register(AuditSubscriber::class)->setPublic(true);
             foreach (['onFlush', 'postFlush', 'onClear'] as $event) {
                 $definition->addTag('doctrine.event_listener', ['event' => $event, 'connection' => 'default']);
+            }
+            foreach (['console.command' => 'onConsoleCommand', 'console.terminate' => 'onConsoleTerminate',
+                'console.error' => 'onConsoleError'] as $event => $method) {
+                $definition->addTag('kernel.event_listener', ['event' => $event, 'method' => $method]);
             }
         });
     }

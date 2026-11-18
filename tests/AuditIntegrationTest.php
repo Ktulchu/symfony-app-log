@@ -12,6 +12,7 @@ use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\ORMSetup;
 use Doctrine\ORM\Tools\SchemaTool;
 use Ktulchu\AppLog\AuditSubscriber;
+use Ktulchu\AppLog\Migrations\Version20261118000000;
 use Ktulchu\AppLog\RawJsonType;
 use Ktulchu\AppLog\RawJsonbType;
 use Ktulchu\AppLog\Migrations\Version20261117000000;
@@ -21,6 +22,7 @@ use PHPUnit\Framework\TestCase;
 final class AuditIntegrationTest extends TestCase
 {
     private EntityManager $em;
+    private AuditSubscriber $audit;
 
     protected function setUp(): void
     {
@@ -33,11 +35,12 @@ final class AuditIntegrationTest extends TestCase
         $config = ORMSetup::createAttributeMetadataConfiguration([__DIR__], true);
         if (PHP_VERSION_ID >= 80400) { $config->enableNativeLazyObjects(true); }
         $this->em = new EntityManager($db, $config);
-        $this->em->getEventManager()->addEventSubscriber(new AuditSubscriber());
+        $this->audit = new AuditSubscriber();
+        $this->em->getEventManager()->addEventSubscriber($this->audit);
         (new SchemaTool($this->em))->createSchema([$this->em->getClassMetadata(Record::class)]);
         $factory = DependencyFactory::fromConnection(new ConfigurationArray(['migrations_paths' => ['Ktulchu\\AppLog\\Migrations' => dirname(__DIR__) . '/migrations']]), new ExistingConnection($db));
         $factory->getMetadataStorage()->ensureInitialized();
-        $plan = $factory->getMigrationPlanCalculator()->getPlanUntilVersion(new \Doctrine\Migrations\Version\Version(Version20261117000000::class));
+        $plan = $factory->getMigrationPlanCalculator()->getPlanUntilVersion(new \Doctrine\Migrations\Version\Version(Version20261118000000::class));
         $factory->getMigrator()->migrate($plan, new MigratorConfiguration());
     }
 
@@ -70,6 +73,56 @@ final class AuditIntegrationTest extends TestCase
         self::assertSame('{}', $this->rows()[2]['new_values']);
         self::assertSame('0', (string)$this->em->getConnection()->fetchOne('SELECT count(*) FROM audit_fixture'));
         self::assertSame('updated', json_decode($this->rows()[2]['old_values'], true)['title']['data']['value']);
+    }
+
+
+    public function testSourceTypeConsoleQueueNestedRestorationAndFailure(): void
+    {
+        $r = $this->create();
+        self::assertNull($this->rows()[0]['source_type']);
+
+        $command = new \Symfony\Component\Console\Command\Command('app:rebuild');
+        $input = new \Symfony\Component\Console\Input\ArrayInput([]);
+        $output = new \Symfony\Component\Console\Output\BufferedOutput();
+        $this->audit->onConsoleCommand(new \Symfony\Component\Console\Event\ConsoleCommandEvent($command, $input, $output));
+        $r->title = 'console';
+        $this->em->wrapInTransaction(fn () => $this->em->flush());
+        $this->audit->withSourceType('queue:OuterJob', function () use ($r): void {
+            $this->audit->withSourceType('queue:InnerJob', function () use ($r): void {
+                $r->title = 'inner';
+                $this->em->wrapInTransaction(fn () => $this->em->flush());
+            });
+            $r->title = 'outer';
+            $this->em->wrapInTransaction(fn () => $this->em->flush());
+        });
+        try {
+            $this->audit->withSourceType('queue:ThrowingJob', static function (): void {
+                throw new \RuntimeException('expected job failure');
+            });
+            self::fail('Expected job failure');
+        } catch (\RuntimeException $e) {
+            self::assertSame('expected job failure', $e->getMessage());
+        }
+        $r->title = 'console again';
+        $this->em->wrapInTransaction(fn () => $this->em->flush());
+        $this->audit->onConsoleTerminate(new \Symfony\Component\Console\Event\ConsoleTerminateEvent($command, $input, $output, 0));
+        $r->title = 'outside';
+        $this->em->wrapInTransaction(fn () => $this->em->flush());
+        self::assertSame([null, 'console:app:rebuild', 'queue:InnerJob', 'queue:OuterJob',
+            'console:app:rebuild', null], array_column($this->rows(), 'source_type'));
+
+        foreach (['', str_repeat('x', 256)] as $invalid) {
+            $called = false;
+            try {
+                $this->audit->withSourceType($invalid, static function () use (&$called): void { $called = true; });
+                self::fail('Invalid source must fail');
+            } catch (\LogicException $e) {
+                self::assertStringContainsString('source_type', $e->getMessage());
+                self::assertFalse($called);
+            }
+        }
+        $this->em->wrapInTransaction(fn () => $this->em->flush()); // No-op.
+        self::assertCount(6, $this->rows());
     }
 
     public static function jsonCases(): iterable
